@@ -10,7 +10,6 @@ def process_jobs():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Find jobs that have not been analyzed yet
     cursor.execute("""
         SELECT id, company, job_title, job_description
         FROM jobs
@@ -34,24 +33,44 @@ def process_jobs():
                 UPDATE jobs
                 SET
                     match_score = ?,
+                    technical_match = ?,
+                    education_match = ?,
+                    seniority_match = ?,
+                    location_match = ?,
+                    visa_concern = ?,
+                    eligible = ?,
                     resume = ?,
                     job_category = ?,
+                    key_matches = ?,
+                    key_gaps = ?,
                     ai_reason = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             """, (
                 result["match_score"],
+                result["technical_match"],
+                int(result["education_match"]),
+                int(result["seniority_match"]),
+                int(result["location_match"]),
+                int(result["visa_concern"]),
+                int(result["eligible"]),
                 result["recommended_resume"],
                 result["job_category"],
+                json.dumps(result["key_matches"]),
+                json.dumps(result["key_gaps"]),
                 result["reason"],
                 job_id
             ))
 
             conn.commit()
 
-            print(f"Score: {result['match_score']}")
-            print(f"Resume: {result['recommended_resume']}")
+            print(f"Score: {result['match_score']}/100")
+            print(f"Eligible: {result['eligible']}")
+            print(f"Recommended Resume: {result['recommended_resume']}")
             print(f"Category: {result['job_category']}")
+            print(f"Technical Match: {result['technical_match']}")
+            print(f"Visa Concern: {result['visa_concern']}")
+            print(f"Reason: {result['reason']}")
 
         except Exception as e:
             print(f"ERROR: {e}")

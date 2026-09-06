@@ -1,52 +1,34 @@
-import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from playwright.sync_api import sync_playwright
 
 
 def collect_job_description(url):
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/131.0.0.0 Safari/537.36"
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=True
         )
-    }
 
-    response = requests.get(
-        url,
-        headers=headers,
-        timeout=20
-    )
+        page = browser.new_page(
+            viewport={
+                "width": 1440,
+                "height": 900
+            }
+        )
 
-    response.raise_for_status()
+        page.goto(
+            url,
+            wait_until="domcontentloaded",
+            timeout=60000
+        )
 
-    soup = BeautifulSoup(response.text, "html.parser")
+        # Give JavaScript-rendered content time to appear
+        page.wait_for_timeout(3000)
 
-    # Remove elements that usually contain navigation/noise
-    for element in soup([
-        "script",
-        "style",
-        "nav",
-        "footer",
-        "header"
-    ]):
-        element.decompose()
+        text = page.locator("body").inner_text()
 
-    text = soup.get_text(
-        separator="\n",
-        strip=True
-    )
+        browser.close()
 
-    # Remove excessive blank lines
-    lines = [
-        line.strip()
-        for line in text.splitlines()
-        if line.strip()
-    ]
-
-    cleaned_text = "\n".join(lines)
-
-    return cleaned_text
+        return text.strip()
 
 
 if __name__ == "__main__":
@@ -57,7 +39,7 @@ if __name__ == "__main__":
         text = collect_job_description(test_url)
 
         print("\n=== COLLECTED PAGE TEXT ===")
-        print(text[:10000])
+        print(text[:15000])
 
         print("\n=== COLLECTION COMPLETE ===")
         print(f"Characters collected: {len(text)}")
