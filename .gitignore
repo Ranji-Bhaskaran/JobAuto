@@ -1,3 +1,27 @@
+# Environment / secrets
 .env
-.venv
-__pycache__
+.env.*
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local databases
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# Generated output
+output/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
