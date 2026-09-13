@@ -50,6 +50,7 @@ def create_database():
 
             key_matches TEXT,
             key_gaps TEXT,
+            resume_keywords TEXT,
             ai_reason TEXT,
 
             tailored INTEGER DEFAULT 0,

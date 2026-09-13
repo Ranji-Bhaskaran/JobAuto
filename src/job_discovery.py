@@ -2,6 +2,7 @@ import sqlite3
 import requests
 from bs4 import BeautifulSoup
 from datetime import date
+import xml.etree.ElementTree as ET
 
 
 DB_PATH = "data/jobs.db"
@@ -883,6 +884,305 @@ def discover_remoteok(cursor):
 
 
 # =========================================================
+# HIMALAYAS — country-code helpers
+# =========================================================
+
+HIMALAYAS_EEA_ALPHA2 = {
+    # EU/EEA-ish set used only to decide "Remote Europe" equivalence
+    # for Himalayas' structured locationRestrictions field.
+    "IE", "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR",
+    "DE", "GR", "HU", "IS", "IT", "LV", "LI", "LT", "LU", "MT", "NL",
+    "NO", "PL", "PT", "RO", "SK", "SI", "ES", "SE",
+}
+
+HIMALAYAS_EXCLUDED_ALPHA2 = {"US", "CA", "AU", "NZ"}
+
+
+def determine_himalayas_location(location_restrictions):
+    """
+    Himalayas gives a structured list of {alpha2, name, slug} instead
+    of free text. Empty list means worldwide/no restriction.
+    Returns (valid, location_type, display_string) same shape idea as
+    determine_location() but with a display string for the DB.
+    """
+    if not location_restrictions:
+        return True, "Remote - Worldwide (needs eligibility check)", "Worldwide"
+
+    codes = {c.get("alpha2", "").upper() for c in location_restrictions}
+    names = ", ".join(c.get("name", "") for c in location_restrictions if c.get("name"))
+
+    if "IE" in codes:
+        return True, "Ireland", names or "Ireland"
+
+    if codes & HIMALAYAS_EEA_ALPHA2:
+        return True, "Remote Europe", names
+
+    if codes & HIMALAYAS_EXCLUDED_ALPHA2:
+        return False, None, names
+
+    # Some other specific country not in our known sets — treat as
+    # not clearly Ireland/EU eligible, skip rather than guess.
+    return False, None, names
+
+
+# =========================================================
+# HIMALAYAS
+# =========================================================
+
+def discover_himalayas(cursor, max_pages=5):
+
+    print("\nSearching Himalayas...")
+
+    base_url = "https://himalayas.app/jobs/api"
+
+    raw_count = 0
+    title_matched = 0
+    location_valid = 0
+    found = 0
+
+    cursor_token = None
+    pages_fetched = 0
+
+    while pages_fetched < max_pages:
+
+        params = {"limit": 20}
+        if cursor_token:
+            params["cursor"] = cursor_token
+
+        response = SESSION.get(base_url, params=params, timeout=30)
+        response.raise_for_status()
+
+        data = response.json()
+        jobs = data.get("jobs", [])
+        raw_count += len(jobs)
+
+        for job in jobs:
+
+            title = job.get("title", "")
+            company = job.get("companyName", "Unknown")
+            job_url = job.get("applicationLink")
+            description = clean_html(job.get("description", ""))
+            location_restrictions = job.get("locationRestrictions", [])
+
+            if not relevant_title(title):
+                continue
+
+            title_matched += 1
+
+            valid, location_type, location_display = determine_himalayas_location(
+                location_restrictions
+            )
+
+            if not valid:
+                continue
+
+            location_valid += 1
+
+            employment_type = job.get("employmentType", "")
+
+            if save_job(
+                cursor,
+                company,
+                title,
+                location_display,
+                job_url,
+                "Himalayas",
+                description,
+                employment_type or "Remote"
+            ):
+
+                found += 1
+
+                print(
+                    f"  + {company} | "
+                    f"{title} | "
+                    f"{location_display} | "
+                    f"{location_type}"
+                )
+
+        pages_fetched += 1
+        cursor_token = data.get("nextCursor")
+
+        if not cursor_token:
+            break
+
+    print(
+        f"Himalayas: {raw_count} fetched -> "
+        f"{title_matched} title-matched -> "
+        f"{location_valid} location-valid -> "
+        f"{found} new"
+    )
+
+    return found
+
+
+# =========================================================
+# WE WORK REMOTELY
+# =========================================================
+
+WWR_FEEDS = [
+    "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss",
+    "https://weworkremotely.com/categories/remote-programming-jobs.rss",
+]
+
+
+def discover_weworkremotely(cursor):
+
+    print("\nSearching We Work Remotely...")
+
+    raw_count = 0
+    title_matched = 0
+    location_valid = 0
+    found = 0
+
+    for feed_url in WWR_FEEDS:
+
+        response = SESSION.get(feed_url, timeout=30)
+        response.raise_for_status()
+
+        root = ET.fromstring(response.content)
+        items = root.findall("./channel/item")
+        raw_count += len(items)
+
+        for item in items:
+
+            raw_title = (item.findtext("title") or "").strip()
+
+            # WWR titles are formatted "Company: Job Title".
+            if ":" in raw_title:
+                company, title = raw_title.split(":", 1)
+                company = company.strip()
+                title = title.strip()
+            else:
+                company = "Unknown"
+                title = raw_title
+
+            if not relevant_title(title):
+                continue
+
+            title_matched += 1
+
+            country_text = (item.findtext("country") or "").strip()
+            region_text = (item.findtext("region") or "").strip()
+            location_text = country_text or region_text
+
+            # WWR is a remote-only board by definition.
+            valid, location_type = determine_location(location_text, remote=True)
+
+            if not valid:
+                continue
+
+            location_valid += 1
+
+            job_url = (item.findtext("link") or "").strip()
+            description = clean_html(item.findtext("description") or "")
+            job_type = (item.findtext("type") or "").strip()
+
+            if save_job(
+                cursor,
+                company,
+                title,
+                location_text or "Remote",
+                job_url,
+                "We Work Remotely",
+                description,
+                job_type or "Remote"
+            ):
+
+                found += 1
+
+                print(
+                    f"  + {company} | "
+                    f"{title} | "
+                    f"{location_text or 'Remote'} | "
+                    f"{location_type}"
+                )
+
+    print(
+        f"We Work Remotely: {raw_count} fetched -> "
+        f"{title_matched} title-matched -> "
+        f"{location_valid} location-valid -> "
+        f"{found} new"
+    )
+
+    return found
+
+
+# =========================================================
+# JOBICY
+# =========================================================
+
+def discover_jobicy(cursor):
+
+    print("\nSearching Jobicy...")
+
+    url = "https://jobicy.com/api/v2/remote-jobs"
+
+    response = SESSION.get(url, params={"count": 200}, timeout=30)
+    response.raise_for_status()
+
+    data = response.json()
+    jobs = data.get("jobs", [])
+
+    raw_count = len(jobs)
+    title_matched = 0
+    location_valid = 0
+    found = 0
+
+    for job in jobs:
+
+        title = job.get("jobTitle", "")
+        company = job.get("companyName", "Unknown")
+        job_geo = job.get("jobGeo", "Anywhere")
+        job_url = job.get("url")
+        description = clean_html(job.get("jobDescription", ""))
+        job_types = job.get("jobType", [])
+        job_type = job_types[0] if job_types else ""
+
+        if not relevant_title(title):
+            continue
+
+        title_matched += 1
+
+        # Jobicy is a remote-only board by definition.
+        valid, location_type = determine_location(job_geo, remote=True)
+
+        if not valid:
+            continue
+
+        location_valid += 1
+
+        if save_job(
+            cursor,
+            company,
+            title,
+            job_geo,
+            job_url,
+            "Jobicy",
+            description,
+            job_type or "Remote"
+        ):
+
+            found += 1
+
+            print(
+                f"  + {company} | "
+                f"{title} | "
+                f"{job_geo} | "
+                f"{location_type}"
+            )
+
+    print(
+        f"Jobicy: {raw_count} fetched -> "
+        f"{title_matched} title-matched -> "
+        f"{location_valid} location-valid -> "
+        f"{found} new"
+    )
+
+    return found
+
+
+# =========================================================
 # DISCOVERY
 # =========================================================
 
@@ -906,12 +1206,20 @@ def discover_jobs():
             discover_arbeitnow
         ),
         (
-            "Remotive",
-            discover_remotive
-        ),
-        (
             "Remote OK",
             discover_remoteok
+        ),
+        (
+            "Himalayas",
+            discover_himalayas
+        ),
+        (
+            "We Work Remotely",
+            discover_weworkremotely
+        ),
+        (
+            "Jobicy",
+            discover_jobicy
         ),
     ]
 

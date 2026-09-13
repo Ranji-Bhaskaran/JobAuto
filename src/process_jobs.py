@@ -43,6 +43,7 @@ def process_jobs():
                     job_category = ?,
                     key_matches = ?,
                     key_gaps = ?,
+                    resume_keywords = ?,
                     ai_reason = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
@@ -58,6 +59,7 @@ def process_jobs():
                 result["job_category"],
                 json.dumps(result["key_matches"]),
                 json.dumps(result["key_gaps"]),
+                json.dumps(result["resume_keywords_to_add"]),
                 result["reason"],
                 job_id
             ))
@@ -70,6 +72,7 @@ def process_jobs():
             print(f"Category: {result['job_category']}")
             print(f"Technical Match: {result['technical_match']}")
             print(f"Visa Concern: {result['visa_concern']}")
+            print(f"Resume keywords to add: {result['resume_keywords_to_add']}")
             print(f"Reason: {result['reason']}")
 
         except Exception as e:
